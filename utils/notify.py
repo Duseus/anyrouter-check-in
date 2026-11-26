@@ -1,3 +1,4 @@
+import json
 import os
 import smtplib
 from email.mime.text import MIMEText
@@ -17,6 +18,9 @@ class NotificationKit:
 		self.server_push_key = os.getenv('SERVERPUSHKEY')
 		self.dingding_webhook = os.getenv('DINGDING_WEBHOOK')
 		self.feishu_webhook = os.getenv('FEISHU_WEBHOOK')
+		self.feishu_app_id = os.getenv('FEISHU_APP_ID')
+		self.feishu_app_secret = os.getenv('FEISHU_APP_SECRET')
+		self.feishu_user_open_id = os.getenv('FEISHU_USER_OPEN_ID')
 		self.weixin_webhook = os.getenv('WEIXIN_WEBHOOK')
 		self.gotify_url = os.getenv('GOTIFY_URL')
 		self.gotify_token = os.getenv('GOTIFY_TOKEN')
@@ -27,9 +31,14 @@ class NotificationKit:
 		self.bark_key = os.getenv('BARK_KEY')
 		self.bark_server = os.getenv('BARK_SERVER', 'https://api.day.app')
 
-	def _post_json(self, service: str, url: str, data: dict[str, Any]) -> httpx.Response:
+	def _post_json(
+		self, service: str, url: str, data: dict[str, Any], headers: dict[str, str] | None = None
+	) -> httpx.Response:
 		with httpx.Client(timeout=30.0) as client:
-			response = client.post(url, json=data)
+			if headers:
+				response = client.post(url, json=data, headers=headers)
+			else:
+				response = client.post(url, json=data)
 
 		if response.status_code >= 400:
 			raise RuntimeError(f'{service} request failed: HTTP {response.status_code}')
@@ -109,6 +118,37 @@ class NotificationKit:
 		}
 		self._post_json('Feishu', self.feishu_webhook, data)
 
+	def send_feishu_app(self, title: str, content: str):
+		if not self.feishu_app_id or not self.feishu_app_secret or not self.feishu_user_open_id:
+			raise ValueError('Feishu App ID, App Secret or User Open ID not configured')
+
+		# 飞书自建应用：先换 tenant_access_token，再以应用身份私聊发送卡片
+		token_response = self._post_json(
+			'Feishu App',
+			'https://open.feishu.cn/open-apis/auth/v3/tenant_access_token/internal',
+			{'app_id': self.feishu_app_id, 'app_secret': self.feishu_app_secret},
+		)
+		token = token_response.json().get('tenant_access_token')
+		if not token:
+			raise RuntimeError('Feishu App request failed: tenant_access_token missing')
+
+		card = {
+			'config': {'wide_screen_mode': True},
+			'elements': [{'tag': 'markdown', 'content': content, 'text_align': 'left'}],
+			'header': {'template': 'blue', 'title': {'content': title, 'tag': 'plain_text'}},
+		}
+		data = {
+			'receive_id': self.feishu_user_open_id,
+			'msg_type': 'interactive',
+			'content': json.dumps(card, ensure_ascii=False),
+		}
+		self._post_json(
+			'Feishu App',
+			'https://open.feishu.cn/open-apis/im/v1/messages?receive_id_type=open_id',
+			data,
+			headers={'Authorization': f'Bearer {token}'},
+		)
+
 	def send_wecom(self, title: str, content: str):
 		if not self.weixin_webhook:
 			raise ValueError('WeChat Work Webhook not configured')
@@ -164,6 +204,7 @@ class NotificationKit:
 			('Server Push', lambda: self.send_serverPush(title, content)),
 			('DingTalk', lambda: self.send_dingtalk(title, content)),
 			('Feishu', lambda: self.send_feishu(title, content)),
+			('Feishu App', lambda: self.send_feishu_app(title, content)),
 			('WeChat Work', lambda: self.send_wecom(title, content)),
 			('Gotify', lambda: self.send_gotify(title, content)),
 			('Telegram', lambda: self.send_telegram(title, content)),

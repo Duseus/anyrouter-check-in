@@ -97,6 +97,36 @@ def test_send_feishu(mock_httpx_client, notification_kit):
 	assert 'card' in args['json']
 
 
+def test_send_feishu_app(mock_httpx_client, monkeypatch):
+	monkeypatch.setenv('FEISHU_APP_ID', 'cli_test')
+	monkeypatch.setenv('FEISHU_APP_SECRET', 'app_secret')
+	monkeypatch.setenv('FEISHU_USER_OPEN_ID', 'ou_test')
+	kit = NotificationKit()
+	mock_client, mock_response = mock_httpx_client
+	mock_response.json.return_value = {'code': 0, 'tenant_access_token': 't-test'}
+
+	kit.send_feishu_app('测试标题', '测试内容')
+
+	assert mock_client.post.call_count == 2
+	token_call, message_call = mock_client.post.call_args_list
+	assert token_call[0][0].endswith('/auth/v3/tenant_access_token/internal')
+	assert token_call[1]['json'] == {'app_id': 'cli_test', 'app_secret': 'app_secret'}
+	assert message_call[0][0].endswith('/im/v1/messages?receive_id_type=open_id')
+	assert message_call[1]['headers'] == {'Authorization': 'Bearer t-test'}
+	assert message_call[1]['json']['receive_id'] == 'ou_test'
+	assert message_call[1]['json']['msg_type'] == 'interactive'
+
+
+def test_send_feishu_app_missing_config(monkeypatch):
+	monkeypatch.delenv('FEISHU_APP_ID', raising=False)
+	monkeypatch.setenv('FEISHU_APP_SECRET', 'app_secret')
+	monkeypatch.setenv('FEISHU_USER_OPEN_ID', 'ou_test')
+	kit = NotificationKit()
+
+	with pytest.raises(ValueError, match='Feishu App ID'):
+		kit.send_feishu_app('测试', '测试')
+
+
 def test_send_wecom(mock_httpx_client, notification_kit):
 	mock_client, _ = mock_httpx_client
 
@@ -164,6 +194,7 @@ def test_push_message(notification_kit, monkeypatch):
 		'send_serverPush',
 		'send_dingtalk',
 		'send_feishu',
+		'send_feishu_app',
 		'send_wecom',
 		'send_gotify',
 		'send_telegram',

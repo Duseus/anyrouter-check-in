@@ -306,6 +306,7 @@ PROVIDERS={"agentrouter":{"use_proxy":true}}
 ### 飞书机器人
 
 - `FEISHU_WEBHOOK`: 飞书机器人的 Webhook 地址
+- `FEISHU_APP_ID` / `FEISHU_APP_SECRET` / `FEISHU_USER_OPEN_ID`: 飞书自建应用私聊通知（三者都配置才启用，以应用身份给该 open_id 发卡片）
 
 ### 企业微信机器人
 
