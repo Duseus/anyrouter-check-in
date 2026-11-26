@@ -180,19 +180,58 @@ class AccountConfig:
 		return self.name if self.name else f'Account {index + 1}'
 
 
+# 从单独环境变量组装账号: (session 变量, api_user 变量, provider, name)
+ENV_PAIR_ACCOUNTS: list[tuple[str, str, str, str]] = [
+	('ANYROUTER_SESSION', 'ANYROUTER_API_USER', 'anyrouter', 'AnyRouter'),
+	('AGENTROUTER_SESSION', 'AGENTROUTER_API_USER', 'agentrouter', 'AgentRouter'),
+]
+
+
+def load_env_pair_accounts() -> list[dict]:
+	"""从 <PROVIDER>_SESSION + <PROVIDER>_API_USER 环境变量组装账号字典
+
+	每对变量都非空时才加入,方便把 session 单独存成一个 secret。
+	"""
+	accounts = []
+	for session_env, api_user_env, provider, name in ENV_PAIR_ACCOUNTS:
+		session = (os.getenv(session_env) or '').strip()
+		api_user = (os.getenv(api_user_env) or '').strip()
+		if session and api_user:
+			accounts.append(
+				{
+					'name': name,
+					'provider': provider,
+					'cookies': {'session': session},
+					'api_user': api_user,
+				}
+			)
+		elif session or api_user:
+			missing = api_user_env if session else session_env
+			print(f'[WARNING] {session_env}/{api_user_env} 只设置了一个, 缺少 {missing}, 跳过 {name} 账号')
+	return accounts
+
+
 def load_accounts_config() -> list[AccountConfig] | None:
-	"""从环境变量加载账号配置"""
-	accounts_str = os.getenv('ANYROUTER_ACCOUNTS')
-	if not accounts_str:
-		print('ERROR: ANYROUTER_ACCOUNTS environment variable not found')
+	"""从环境变量加载账号配置
+
+	ANYROUTER_ACCOUNTS (JSON 数组, 可为空/未设) 与 ANYROUTER_SESSION/ANYROUTER_API_USER、
+	AGENTROUTER_SESSION/AGENTROUTER_API_USER 组装的账号合并。
+	"""
+	accounts_str = (os.getenv('ANYROUTER_ACCOUNTS') or '').strip()
+	env_pair_accounts = load_env_pair_accounts()
+
+	if not accounts_str and not env_pair_accounts:
+		print('ERROR: ANYROUTER_ACCOUNTS (or *_SESSION + *_API_USER) environment variable not found')
 		return None
 
-	try:
-		accounts_data = json.loads(accounts_str)
-	except json.JSONDecodeError as e:
-		print(f'ERROR: ANYROUTER_ACCOUNTS JSON 解析失败: {e}')
-		print('HINT: 常见原因 - 末尾多余逗号、使用了单引号、包含注释、或换行格式问题')
-		return None
+	accounts_data: list = []
+	if accounts_str:
+		try:
+			accounts_data = json.loads(accounts_str)
+		except json.JSONDecodeError as e:
+			print(f'ERROR: ANYROUTER_ACCOUNTS JSON 解析失败: {e}')
+			print('HINT: 常见原因 - 末尾多余逗号、使用了单引号、包含注释、或换行格式问题')
+			return None
 
 	try:
 		if not isinstance(accounts_data, list):
@@ -225,6 +264,16 @@ def load_accounts_config() -> list[AccountConfig] | None:
 				return None
 
 			accounts.append(AccountConfig.from_dict(account_dict, i))
+
+		for account_dict in env_pair_accounts:
+			accounts.append(AccountConfig.from_dict(account_dict, len(accounts)))
+
+		if env_pair_accounts:
+			print(f'[INFO] Loaded {len(env_pair_accounts)} account(s) from *_SESSION/*_API_USER environment variables')
+
+		if not accounts:
+			print('ERROR: No account configured')
+			return None
 
 		return accounts
 	except Exception as e:
