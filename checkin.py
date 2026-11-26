@@ -609,6 +609,11 @@ async def main():
 		else:
 			print('[INFO] No balance changes detected')
 
+	if os.getenv('ALWAYS_NOTIFY', 'true').strip().lower() in ('1', 'true', 'yes', 'on'):
+		# Push the result every run, not only on failure / balance change
+		need_notify = True
+		balance_changed = True
+
 	if balance_changed:
 		for i, account in enumerate(accounts):
 			account_key = f'account_{i + 1}'
