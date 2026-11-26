@@ -609,10 +609,14 @@ async def main():
 		else:
 			print('[INFO] No balance changes detected')
 
-	if os.getenv('ALWAYS_NOTIFY', 'true').strip().lower() in ('1', 'true', 'yes', 'on'):
-		# Push the result every run, not only on failure / balance change
+	notify_mode = os.getenv('NOTIFY_MODE', 'failure').strip().lower()
+	if notify_mode == 'always':
+		# Push the result every run
 		need_notify = True
 		balance_changed = True
+	elif notify_mode == 'failure' and success_count == total_count:
+		# Only push on failures; the daily summary card covers successful runs
+		need_notify = False
 
 	if balance_changed:
 		for i, account in enumerate(accounts):
