@@ -7,6 +7,7 @@ import asyncio
 import hashlib
 import json
 import os
+import re
 import sys
 from datetime import datetime
 
@@ -234,26 +235,47 @@ async def login_with_credentials(
 		return None
 
 
+_LONG_TOKEN_RE = re.compile(r'[A-Za-z0-9_\-+/=.]{24,}')
+
+
+def _describe_response(response) -> str:
+	"""返回响应的简要诊断信息（状态码、Content-Type、正文前 300 字符，长 token 打码）。"""
+	content_type = response.headers.get('content-type', '')
+	snippet = (response.text or '')[:300].replace('\n', ' ').replace('\r', ' ')
+	snippet = _LONG_TOKEN_RE.sub(lambda m: m.group(0)[:4] + '***', snippet)
+	hint = ''
+	if 'aliyun_waf' in (response.text or '')[:2000] or 'Access Verification' in (response.text or ''):
+		hint = ' [Aliyun WAF challenge page: request IP blocked / slider verification required]'
+	return f'HTTP {response.status_code}, Content-Type: {content_type or "-"}{hint}, body: {snippet!r}'
+
+
 def get_user_info(client, headers, user_info_url: str):
 	"""获取用户信息"""
 	try:
 		response = client.get(user_info_url, headers=headers, timeout=30)
-
-		if response.status_code == 200:
-			data = response.json()
-			if data.get('success'):
-				user_data = data.get('data', {})
-				quota = round(user_data.get('quota', 0) / 500000, 2)
-				used_quota = round(user_data.get('used_quota', 0) / 500000, 2)
-				return {
-					'success': True,
-					'quota': quota,
-					'used_quota': used_quota,
-					'display': f':money: Current balance: ${quota}, Used: ${used_quota}',
-				}
-		return {'success': False, 'error': f'Failed to get user info: HTTP {response.status_code}'}
 	except Exception as e:
-		return {'success': False, 'error': f'Failed to get user info: {str(e)[:50]}...'}
+		return {'success': False, 'error': f'Failed to get user info: request error {str(e)[:100]}'}
+
+	try:
+		data = response.json()
+	except Exception:
+		return {'success': False, 'error': f'Failed to get user info: non-JSON response ({_describe_response(response)})'}
+
+	if response.status_code == 200 and isinstance(data, dict) and data.get('success'):
+		user_data = data.get('data', {}) or {}
+		quota = round(user_data.get('quota', 0) / 500000, 2)
+		used_quota = round(user_data.get('used_quota', 0) / 500000, 2)
+		return {
+			'success': True,
+			'quota': quota,
+			'used_quota': used_quota,
+			'display': f':money: Current balance: ${quota}, Used: ${used_quota}',
+		}
+	message = data.get('message', '') if isinstance(data, dict) else ''
+	return {
+		'success': False,
+		'error': f'Failed to get user info: HTTP {response.status_code} {str(message)[:120]}'.rstrip(),
+	}
 
 
 async def prepare_cookies(account_name: str, provider_config, user_cookies: dict) -> dict | None:
